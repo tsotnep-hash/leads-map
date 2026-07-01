@@ -50,6 +50,13 @@
   #overlay { position:fixed; inset:0; background:rgba(255,255,255,.95); color:#3c4043; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:15px; z-index:2000; gap:12px; text-align:center; padding:20px; }
   .spinner { width:36px; height:36px; border:4px solid #e0e0e0; border-top-color:#1a73e8; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  #toast {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#323232; color:#fff; padding:11px 18px; border-radius:8px;
+    font-size:13.5px; box-shadow:0 3px 12px rgba(0,0,0,.3); z-index:3000;
+    display:none; align-items:center; gap:12px; max-width:90vw;
+  }
+  #toast button { background:#8ab4f8; color:#202124; border:none; border-radius:5px; padding:4px 10px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit; }
   #setupBox { max-width:560px; background:#fff; border:1px solid #dadce0; border-radius:10px; padding:22px; box-shadow:0 2px 12px rgba(0,0,0,.12); text-align:left; }
   #setupBox h2 { margin:0 0 10px; font-size:17px; color:#202124; }
   #setupBox p { margin:8px 0; font-size:13.5px; color:#3c4043; line-height:1.55; }
@@ -103,6 +110,7 @@
   </div>
   <div id="map"></div>
 </div>
+<div id="toast"></div>
 
 <div id="overlay">
   <div id="setupBox">
@@ -314,24 +322,67 @@ function initDateBounds(){
   if(mx)document.getElementById('dateTo').value=mx;
 }
 
-async function loadData(url){
+let _toastTimer=null;
+function showToast(msg, withRetry){
+  const t=document.getElementById('toast');
+  t.innerHTML = esc(msg) + (withRetry ? ' <button id="toastRetry">Retry</button>' : '');
+  t.style.display='flex';
+  if(withRetry){
+    const b=document.getElementById('toastRetry');
+    if(b) b.onclick=()=>{ hideToast(); const u=getUrl(); if(u) loadData(u,{isRefresh:true}); };
+  }
+  clearTimeout(_toastTimer);
+  if(!withRetry) _toastTimer=setTimeout(hideToast, 3500);
+}
+function hideToast(){ document.getElementById('toast').style.display='none'; }
+
+async function fetchWithRetry(url, tries){
+  let lastErr=null;
+  for(let i=0;i<tries;i++){
+    try{
+      const resp=await fetch(url+(url.includes('?')?'&':'?')+'_ts='+Date.now()+'_'+i);
+      if(resp.ok) return await resp.text();
+      lastErr=new Error('HTTP '+resp.status);
+    }catch(e){ lastErr=e; }
+    // wait before next try (Google sometimes returns a transient 404)
+    if(i<tries-1) await new Promise(r=>setTimeout(r, 1500));
+  }
+  throw lastErr || new Error('fetch failed');
+}
+
+async function loadData(url, opts){
+  opts = opts || {};
+  const isRefresh = !!opts.isRefresh;
   const ov=document.getElementById('overlay');
-  ov.innerHTML='<div class="spinner"></div><div>Loading data from the sheet…</div>';
-  ov.style.display='flex';
+  const hasData = ALL_ROWS.length > 0;
+
+  if(isRefresh && hasData){
+    // don't cover the map; just show a small toast
+    showToast('Refreshing…', false);
+  } else {
+    ov.innerHTML='<div class="spinner"></div><div>Loading data from the sheet…</div>';
+    ov.style.display='flex';
+  }
+
   try{
-    const resp=await fetch(url+(url.includes('?')?'&':'?')+'_ts='+Date.now());
-    if(!resp.ok) throw new Error('HTTP '+resp.status);
-    const text=await resp.text();
+    const text=await fetchWithRetry(url, isRefresh ? 3 : 4);
     const raw=parseCSV(text);
-    ALL_ROWS=processRows(raw);
-    if(!ALL_ROWS.length) throw new Error('Could not parse rows. Make sure the ABC-AR sheet is published as CSV.');
+    const parsed=processRows(raw);
+    if(!parsed.length) throw new Error('Could not parse rows. Make sure the ABC-AR sheet is published as CSV.');
+    ALL_ROWS=parsed;
     initDateBounds();
     applyFilters();
     ov.style.display='none';
+    if(isRefresh) showToast('Data updated ✓', false);
     try{ localStorage.setItem('abcar_csv_url', url); }catch(e){}
   }catch(err){
-    ov.innerHTML='<div id="setupBox"><h2>Failed to load</h2><p style="color:#c5221f">'+esc(err.message)+'</p><p>Check the CSV link and paste it again:</p><input type="text" id="csvUrlInput2" placeholder="https://docs.google.com/.../pub?...output=csv"><p style="text-align:center;margin-top:12px"><button class="btn" onclick="const u=document.getElementById(\'csvUrlInput2\').value.trim(); if(u) loadData(u);">Retry</button></p></div>';
-    ov.style.display='flex';
+    if(hasData){
+      // keep current data on the map, just warn — do NOT show the setup box
+      showToast('Update failed ('+err.message+'). Showing previous data.', true);
+    } else {
+      ov.innerHTML='<div id="setupBox"><h2>Failed to load</h2><p style="color:#c5221f">'+esc(err.message)+'</p><p>Check the CSV link and paste it again:</p><input type="text" id="csvUrlInput2" placeholder="https://docs.google.com/.../pub?...output=csv"><p style="text-align:center;margin-top:12px"><button class="btn" onclick="const u=document.getElementById(\'csvUrlInput2\').value.trim(); if(u) loadData(u);">Retry</button></p></div>';
+      ov.style.display='flex';
+    }
   }
 }
 
@@ -342,7 +393,7 @@ document.getElementById('deptFilter').addEventListener('change', applyFilters);
 document.getElementById('statusFilter').addEventListener('change', applyFilters);
 document.getElementById('mktFilter').addEventListener('change', applyFilters);
 document.getElementById('resetBtn').addEventListener('click',()=>{ initDateBounds(); document.getElementById('deptFilter').value='all'; document.getElementById('statusFilter').value='all'; document.getElementById('mktFilter').value='all'; document.getElementById('dateField').value='job_created'; applyFilters(); });
-document.getElementById('reloadBtn').addEventListener('click',()=>{ const u=getUrl(); if(u) loadData(u); });
+document.getElementById('reloadBtn').addEventListener('click',()=>{ const u=getUrl(); if(u) loadData(u,{isRefresh:true}); });
 document.getElementById('loadUrlBtn').addEventListener('click',()=>{ const u=document.getElementById('csvUrlInput').value.trim(); if(u) loadData(u); });
 
 function getUrl(){
