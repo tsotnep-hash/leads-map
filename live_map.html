@@ -47,6 +47,19 @@
     border-radius:50%; font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,.4);
     font-size:11px; line-height:1;
   }
+  /* lead-count clusters (number = total leads inside) */
+  .lead-cluster { background:transparent; }
+  .lead-cluster div {
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    border-radius:50%; color:#fff; font-weight:700; border:2px solid #fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.4);
+  }
+  .lead-cluster span { font-size:13px; }
+  .lead-cluster.lc-s  div { background:#5b9bf5; }
+  .lead-cluster.lc-sm div { background:#4285f4; }
+  .lead-cluster.lc-m  div { background:#1a73e8; }
+  .lead-cluster.lc-l  div { background:#1257b8; }
+  .lead-cluster.lc-xl div { background:#0b3d85; font-size:14px; }
   #overlay { position:fixed; inset:0; background:rgba(255,255,255,.95); color:#3c4043; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:15px; z-index:2000; gap:12px; text-align:center; padding:20px; }
   .spinner { width:36px; height:36px; border:4px solid #e0e0e0; border-top-color:#1a73e8; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
@@ -145,11 +158,29 @@ const terrain = L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
 roads.addTo(map);
 L.control.layers({ 'Map':roads, 'Satellite':satellite, 'Terrain':terrain }, null, { position:'topright', collapsed:true }).addTo(map);
 
-const cluster = L.markerClusterGroup({ chunkedLoading:true, maxClusterRadius:45, spiderfyOnMaxZoom:true, disableClusteringAtZoom:14 });
+const cluster = L.markerClusterGroup({
+  chunkedLoading:true, maxClusterRadius:45, spiderfyOnMaxZoom:true, disableClusteringAtZoom:14,
+  iconCreateFunction: function(cl){
+    // sum leads across all child markers (not number of markers)
+    let total=0;
+    cl.getAllChildMarkers().forEach(function(m){ total += (m.leadCount||1); });
+    // size buckets by total leads
+    let size=36, cls='lc-s';
+    if(total>=1000){ size=64; cls='lc-xl'; }
+    else if(total>=200){ size=56; cls='lc-l'; }
+    else if(total>=50){ size=48; cls='lc-m'; }
+    else if(total>=10){ size=42; cls='lc-sm'; }
+    return L.divIcon({
+      html:'<div><span>'+total+'</span></div>',
+      className:'lead-cluster '+cls,
+      iconSize:[size,size]
+    });
+  }
+});
 map.addLayer(cluster);
 
 const legend = L.control({position:'bottomright'});
-legend.onAdd = function(){ const d=L.DomUtil.create('div','legend'); d.innerHTML=`<b>Lead density</b><br><span class="dot"></span>Point = ZIP code<br><span style="font-size:11px;color:#5f6368">Number on each point = leads count.<br>Numbers in circles = clusters (zoom in).</span>`; return d; };
+legend.onAdd = function(){ const d=L.DomUtil.create('div','legend'); d.innerHTML=`<b>Lead density</b><br><span class="dot"></span>Point = ZIP code<br><span style="font-size:11px;color:#5f6368">Every number = lead count.<br>On a point: leads in that ZIP.<br>In a cluster: total leads in the area.</span>`; return d; };
 legend.addTo(map);
 
 let ALL_ROWS = [];
@@ -269,6 +300,7 @@ function buildMarkers(rows){
       iconSize:[size,size], iconAnchor:[size/2,size/2]
     });
     const m=L.marker([lat,lng],{icon:icon});
+    m.leadCount = n;   // used by cluster to sum leads, not markers
     let popup;
     if(n===1){ popup=`<div class="popup-lead">${leadHtml(arr[0])}</div>`; }
     else {
@@ -309,7 +341,7 @@ function applyFilters(){
   });
   cluster.clearLayers();
   cluster.addLayers(buildMarkers(rows));
-  document.getElementById('stats').innerHTML=`Showing: <b>${rows.length.toLocaleString('en')}</b> of ${ALL_ROWS.length.toLocaleString('en')} · points: <b>${cluster.getLayers().length.toLocaleString('en')}</b>`;
+  document.getElementById('stats').innerHTML=`Showing: <b>${rows.length.toLocaleString('en')}</b> leads of ${ALL_ROWS.length.toLocaleString('en')} · <b>${cluster.getLayers().length.toLocaleString('en')}</b> ZIP points`;
 }
 
 function initDateBounds(){
