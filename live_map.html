@@ -117,6 +117,12 @@
         <option value="4C">4C</option>
       </select>
     </div>
+    <div class="ctrl">
+      <label>Lose reason:</label>
+      <select id="reasonFilter">
+        <option value="all">All</option>
+      </select>
+    </div>
     <button class="btn secondary" id="resetBtn">Reset</button>
     <button class="btn" id="reloadBtn">🔄 Refresh</button>
     <div id="stats"></div>
@@ -340,10 +346,12 @@ function applyFilters(){
   const dept=document.getElementById('deptFilter').value;
   const status=document.getElementById('statusFilter').value;
   const mkt=document.getElementById('mktFilter').value;
+  const reason=document.getElementById('reasonFilter').value;
   const rows=ALL_ROWS.filter(d=>{
     if(dept!=='all' && d.dept!==dept) return false;
     if(!statusMatch(status, d.status)) return false;
     if(mkt!=='all' && d.mkt!==mkt) return false;
+    if(reason!=='all' && (d.reason||'').trim()!==reason) return false;
     const dv=(field==='job_created')?d.jc:d.ad;
     if(from && (!dv || dv<from)) return false;
     if(to && (!dv || dv>to)) return false;
@@ -362,6 +370,21 @@ function initDateBounds(){
   ['dateFrom','dateTo'].forEach(id=>{ const el=document.getElementById(id); if(mn)el.min=mn; if(mx)el.max=mx; });
   if(mn)document.getElementById('dateFrom').value=mn;
   if(mx)document.getElementById('dateTo').value=mx;
+}
+
+function initReasonOptions(){
+  const sel=document.getElementById('reasonFilter');
+  const prev=sel.value;   // keep current choice if still valid
+  const set=new Set();
+  for(const d of ALL_ROWS){
+    const r=(d.reason||'').trim();
+    if(r) set.add(r);
+  }
+  const sorted=Array.from(set).sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML='<option value="all">All</option>' +
+    sorted.map(r=>`<option value="${r.replace(/"/g,'&quot;')}">${r}</option>`).join('');
+  // restore previous selection if it still exists
+  if(prev && (prev==='all' || set.has(prev))) sel.value=prev;
 }
 
 let _toastTimer=null;
@@ -413,6 +436,7 @@ async function loadData(url, opts){
     if(!parsed.length) throw new Error('Could not parse rows. Make sure the ABC-AR sheet is published as CSV.');
     ALL_ROWS=parsed;
     initDateBounds();
+    initReasonOptions();
     applyFilters();
     ov.style.display='none';
     if(isRefresh) showToast('Data updated ✓', false);
@@ -434,7 +458,8 @@ document.getElementById('dateTo').addEventListener('change', applyFilters);
 document.getElementById('deptFilter').addEventListener('change', applyFilters);
 document.getElementById('statusFilter').addEventListener('change', applyFilters);
 document.getElementById('mktFilter').addEventListener('change', applyFilters);
-document.getElementById('resetBtn').addEventListener('click',()=>{ initDateBounds(); document.getElementById('deptFilter').value='all'; document.getElementById('statusFilter').value='all'; document.getElementById('mktFilter').value='all'; document.getElementById('dateField').value='job_created'; applyFilters(); });
+document.getElementById('reasonFilter').addEventListener('change', applyFilters);
+document.getElementById('resetBtn').addEventListener('click',()=>{ initDateBounds(); document.getElementById('deptFilter').value='all'; document.getElementById('statusFilter').value='all'; document.getElementById('mktFilter').value='all'; document.getElementById('reasonFilter').value='all'; document.getElementById('dateField').value='job_created'; applyFilters(); });
 document.getElementById('reloadBtn').addEventListener('click',()=>{ const u=getUrl(); if(u) loadData(u,{isRefresh:true}); });
 document.getElementById('loadUrlBtn').addEventListener('click',()=>{ const u=document.getElementById('csvUrlInput').value.trim(); if(u) loadData(u); });
 
